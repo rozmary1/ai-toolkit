@@ -195,6 +195,23 @@ pip install -r requirements.txt
 ```
 
 
+## Using AI Toolkit
+
+Once dependencies are installed you can run the toolkit in two ways:
+
+1. **Web UI (recommended for quick experimentation)**
+   - Start the Dockerized stack from the repository root: `docker compose up -d ai-toolkit`.
+   - Open [http://localhost:8675](http://localhost:8675) in your browser and sign in with the password from the `AI_TOOLKIT_AUTH` environment variable (defaults to `password`).
+   - Configure a job in the UI: pick a base model, set your dataset folder, choose a training method (LoRA, LyCORIS, adapters, etc.), and hit **Start** to launch the training run.
+
+2. **CLI (for scripted or headless runs)**
+   - Copy one of the example configs in `config/examples/` and update paths, batch sizes, and network settings.
+   - Run the job by pointing `run.py` at the config: `python run.py config/examples/train_lora_hidream_48.yaml`.
+   - Combine multiple configs in one command to queue them sequentially: `python run.py config/job1.yaml config/job2.yaml`.
+
+In both flows, training outputs, checkpoints, and samples are written to the `output/` directory by default. You can safely customize save locations in the config or via the UI without changing code.
+
+
 # AI Toolkit UI
 
 <img src="https://ostris.com/wp-content/uploads/2025/02/toolkit-ui.jpg" alt="AI Toolkit UI" width="100%">
@@ -299,6 +316,35 @@ IMPORTANT. If you press crtl+c while it is saving, it will likely corrupt that c
 Please do not open a bug report unless it is a bug in the code. You are welcome to [Join my Discord](https://discord.gg/VXmU2f5WEU)
 and ask for help there. However, please refrain from PMing me directly with general question or support. Ask in the discord
 and I will answer when I can.
+
+### LyCORIS configs and custom module selection
+
+LyCORIS backends support all published algorithms (LoHa, LoKr, IA3, DyLoRA, GLoRA, LoCon) and will automatically expose optional BOFT, Diag-OFT, and Full adapters when those extra LyCORIS modules are installed. You can steer which one is used per module directly from your training config.
+
+```yaml
+network:
+  type: "lycoris"           # or "locon"
+  linear: 32
+  conv: 16
+  network_kwargs:
+    algo: "loha"            # default algo for every target module
+    target_lin_modules:      # add any custom module classes you want LyCORIS to wrap
+      - "Transformer2DModel"
+      - "ZImageTransformer2DModel"  # example for Z-Image
+      - "ResnetBlock2D"
+    module_algo_map:         # choose an algorithm per module class name
+      "Transformer2DModel": "glora"
+      "ResnetBlock2D": "lokr"
+    name_algo_map:           # override by fully-qualified module name inside UNet/TextEncoder
+      "time_embedding.linear_1": "ia3"
+      "up_blocks.0.attentions.0.to_v": "dylora"
+```
+
+**How it works**
+* `algo` sets the default LyCORIS algorithm. Valid values match upstream names: `locon`, `loha`, `lokr`, `ia3`, `dylora`, `glora`, plus `boft`, `diag-oft`, or `full` when those modules are present in your LyCORIS install.
+* `target_lin_modules` extends the list of module class names LyCORIS will patch (e.g., add `ZImageTransformer2DModel` for Z-Image).
+* `module_algo_map` lets you pick algorithms by module class name. Every matching module uses that algorithm instead of the default.
+* `name_algo_map` is the most specific: supply the full dotted path of a module instance (as shown in debug logs) to force an algorithm there.
 
 ## Gradio UI
 

@@ -1,9 +1,17 @@
+import importlib
 import math
 import os
-from typing import Optional, Union, List, Type
+from typing import Dict, Optional, Union, List, Type
 
 import torch
-from lycoris.kohya import LycorisNetwork, LoConModule
+from lycoris.kohya import (
+    DyLoraModule,
+    IA3Module,
+    LoConModule,
+    LohaModule,
+    LokrModule,
+    LycorisNetwork,
+)
 from lycoris.modules.glora import GLoRAModule
 from torch import nn
 from transformers import CLIPTextModel
@@ -19,6 +27,60 @@ CONV_MODULES = [
     'Conv2d',
     'LoRACompatibleConv'
 ]
+
+
+def create_toolkit_module(base_cls: Type[nn.Module]) -> Type[nn.Module]:
+    class ToolkitLycoModule(ToolkitModuleMixin, base_cls, ExtractableModuleMixin):
+        def __init__(self, *args, network=None, **kwargs):
+            ToolkitModuleMixin.__init__(self, network=network)
+            base_cls.__init__(self, *args, **kwargs)
+
+    ToolkitLycoModule.__name__ = f"Toolkit{base_cls.__name__}"
+    return ToolkitLycoModule
+
+
+LohaSpecialModule = create_toolkit_module(LohaModule)
+LokrSpecialModule = create_toolkit_module(LokrModule)
+IA3SpecialModule = create_toolkit_module(IA3Module)
+DyLoRASpecialModule = create_toolkit_module(DyLoraModule)
+GLoRASpecialModule = create_toolkit_module(GLoRAModule)
+
+
+def _optional_algorithm(module_path: str, class_name: str):
+    spec = importlib.util.find_spec(module_path)
+    if spec is None:
+        return None
+    module = importlib.import_module(module_path)
+    return getattr(module, class_name, None)
+
+
+ButterflyOFTModule = _optional_algorithm("lycoris.modules.boft", "ButterflyOFTModule")
+DiagOFTModule = _optional_algorithm("lycoris.modules.diag_oft", "DiagOFTModule")
+FullModule = _optional_algorithm("lycoris.modules.full", "FullModule")
+
+OPTIONAL_ALGO_MAP: Dict[str, Type[nn.Module]] = {}
+
+if ButterflyOFTModule is not None:
+    boft_cls = create_toolkit_module(ButterflyOFTModule)
+    OPTIONAL_ALGO_MAP.update({
+        "boft": boft_cls,
+        "butterflyoft": boft_cls,
+    })
+
+if DiagOFTModule is not None:
+    diag_oft_cls = create_toolkit_module(DiagOFTModule)
+    OPTIONAL_ALGO_MAP.update({
+        "diag-oft": diag_oft_cls,
+        "diag_oft": diag_oft_cls,
+        "diagoft": diag_oft_cls,
+    })
+
+if FullModule is not None:
+    full_cls = create_toolkit_module(FullModule)
+    OPTIONAL_ALGO_MAP.update({
+        "full": full_cls,
+    })
+
 
 class LoConSpecialModule(ToolkitModuleMixin, LoConModule, ExtractableModuleMixin):
     def __init__(
@@ -108,6 +170,16 @@ class LoConSpecialModule(ToolkitModuleMixin, LoConModule, ExtractableModuleMixin
 
 
 class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
+    ALGO_MAP: Dict[str, Type[nn.Module]] = {
+        "locon": LoConSpecialModule,
+        "lycoris": LoConSpecialModule,
+        "loha": LohaSpecialModule,
+        "lokr": LokrSpecialModule,
+        "ia3": IA3SpecialModule,
+        "dylora": DyLoRASpecialModule,
+        "glora": GLoRASpecialModule,
+        **OPTIONAL_ALGO_MAP,
+    }
     UNET_TARGET_REPLACE_MODULE = [
         "Transformer2DModel",
         "ResnetBlock2D",
@@ -176,6 +248,32 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
         torch.nn.Module.__init__(self)
 
         # LyCORIS unique stuff
+        algo = kwargs.pop("algo", None)
+        module_algo_map = kwargs.pop("module_algo_map", None)
+        name_algo_map = kwargs.pop("name_algo_map", None)
+        target_replace_modules = kwargs.pop("target_lin_modules", None)
+        target_replace_names = kwargs.pop("target_replace_names", None)
+
+        if algo is not None:
+            algo_cls = self.ALGO_MAP.get(algo.lower())
+            if algo_cls is None:
+                raise ValueError(f"Unknown LyCORIS algorithm: {algo}")
+            network_module = algo_cls
+
+        def _build_algo_map(raw_map: Optional[Dict[str, str]]):
+            resolved = {}
+            if raw_map is None:
+                return resolved
+            for key, value in raw_map.items():
+                algo_cls = self.ALGO_MAP.get(value.lower())
+                if algo_cls is None:
+                    raise ValueError(f"Unknown LyCORIS algorithm for {key}: {value}")
+                resolved[key] = algo_cls
+            return resolved
+
+        self.MODULE_ALGO_MAP = _build_algo_map(module_algo_map)
+        self.NAME_ALGO_MAP = _build_algo_map(name_algo_map)
+
         if dropout is None:
             dropout = 0
         if rank_dropout is None:
@@ -214,6 +312,22 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
         self.module_dropout = module_dropout
 
         # create module instances
+        unet_target_modules = (
+            target_replace_modules
+            if target_replace_modules is not None
+            else list(LycorisSpecialNetwork.UNET_TARGET_REPLACE_MODULE)
+        )
+        unet_target_names = (
+            target_replace_names
+            if target_replace_names is not None
+            else list(LycorisSpecialNetwork.UNET_TARGET_REPLACE_NAME)
+        )
+
+        if kwargs.get("is_transformer"):
+            for transformer_module in ["Transformer2DModel", "ZImageTransformer2DModel"]:
+                if transformer_module not in unet_target_modules:
+                    unet_target_modules.append(transformer_module)
+
         def create_modules(
                 prefix,
                 root_module: torch.nn.Module,
@@ -328,14 +442,14 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                     loras.append(lora)
             return loras
 
-        if network_module == GLoRAModule:
+        if issubclass(network_module, GLoRAModule):
             print('GLoRA enabled, only train transformer')
             # only train transformer (for GLoRA)
-            LycorisSpecialNetwork.UNET_TARGET_REPLACE_MODULE = [
+            unet_target_modules = [
                 "Transformer2DModel",
                 "Attention",
             ]
-            LycorisSpecialNetwork.UNET_TARGET_REPLACE_NAME = []
+            unet_target_names = []
 
         if isinstance(text_encoder, list):
             text_encoders = text_encoder
@@ -358,8 +472,12 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                 ))
         print(f"create LyCORIS for Text Encoder: {len(self.text_encoder_loras)} modules.")
         if self.train_unet:
-            self.unet_loras = create_modules(LycorisSpecialNetwork.LORA_PREFIX_UNET, unet,
-                                             LycorisSpecialNetwork.UNET_TARGET_REPLACE_MODULE)
+            self.unet_loras = create_modules(
+                LycorisSpecialNetwork.LORA_PREFIX_UNET,
+                unet,
+                unet_target_modules,
+                unet_target_names,
+            )
         else:
             self.unet_loras = []
         print(f"create LyCORIS for U-Net: {len(self.unet_loras)} modules.")
