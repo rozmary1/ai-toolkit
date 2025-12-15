@@ -348,6 +348,15 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                 if transformer_module not in unet_target_modules:
                     unet_target_modules.append(transformer_module)
 
+        def _join_lora_name(*parts: str) -> str:
+            return '.'.join([p for p in parts if p])
+
+        def _make_safe_lora_name(canonical: str) -> str:
+            # PyTorch module names cannot contain dots. Use double-underscore as a
+            # reversible separator so we can restore dotted hierarchy for
+            # downstream loaders during save/load conversions.
+            return canonical.replace('.', '__')
+
         def create_modules(
                 prefix,
                 root_module: torch.nn.Module,
@@ -368,9 +377,10 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                     else:
                         algo = network_module
                     for child_name, child_module in module.named_modules():
-                        lora_name = prefix + '.' + name + '.' + child_name
-                        if lora_name.startswith('lora_unet_input_blocks_1_0_emb_layers_1'):
-                            print(f"{lora_name}")
+                        canonical_name = _join_lora_name(prefix, name, child_name)
+                        lora_name = _make_safe_lora_name(canonical_name)
+                        if canonical_name.startswith('lora_unet_input_blocks_1_0_emb_layers_1'):
+                            print(f"{canonical_name}")
 
                         if child_module.__class__.__name__ in LINEAR_MODULES and lora_dim > 0:
                             lora = algo(
@@ -417,7 +427,8 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                         algo = self.NAME_ALGO_MAP[name]
                     else:
                         algo = network_module
-                    lora_name = prefix + '.' + name
+                    canonical_name = _join_lora_name(prefix, name)
+                    lora_name = _make_safe_lora_name(canonical_name)
                     if module.__class__.__name__ == 'Linear' and lora_dim > 0:
                         lora = algo(
                             lora_name, module, self.multiplier,

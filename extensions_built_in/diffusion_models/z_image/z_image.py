@@ -403,9 +403,8 @@ class ZImageModel(BaseModel):
         new_sd = {}
         for key, value in state_dict.items():
             new_key = _swap_prefix(key)
-            # Legacy LyCORIS weights used double-underscore separators. Normalize them
-            # back to dotted paths so downstream loaders can resolve module names
-            # correctly.
+            # LyCORIS module names inside the network use double-underscore as a
+            # safe separator. Restore dotted paths for downstream loaders.
             new_key = new_key.replace("__", ".")
             new_sd[new_key] = value
         return new_sd
@@ -420,10 +419,17 @@ class ZImageModel(BaseModel):
 
         new_sd = {}
         for key, value in state_dict.items():
-            new_key = _swap_prefix(key)
             # Accept either dotted or legacy underscore-separated keys and normalize
-            # to the format expected by the Toolkit networks.
-            if "__" in new_key:
-                new_key = new_key.replace("__", ".")
+            # to the canonical dotted format before mapping back to the safe module
+            # names used inside the network.
+            incoming_key = key
+            if "__" in incoming_key:
+                incoming_key = incoming_key.replace("__", ".")
+
+            new_key = _swap_prefix(incoming_key)
+            # Convert dotted canonical names back to double-underscore-separated
+            # module identifiers so Torch module registration remains valid.
+            if "." in new_key:
+                new_key = new_key.replace(".", "__")
             new_sd[new_key] = value
         return new_sd
