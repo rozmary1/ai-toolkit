@@ -287,6 +287,11 @@ class ToolkitModuleMixin:
 
         org_forwarded = self.org_forward(x, *args, **kwargs)
 
+        # Some LyCORIS variants (e.g., LoHA) do not expose lora_down/lora_up; fall back to
+        # the original forward to avoid attribute errors while keeping compatibility.
+        if not hasattr(self, "lora_down") or not hasattr(self, "lora_up"):
+            return org_forwarded
+
         if isinstance(x, QTensor):
             x = x.dequantize()
         # always cast to float32
