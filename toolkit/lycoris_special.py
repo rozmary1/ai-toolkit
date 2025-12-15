@@ -269,6 +269,10 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                 raise ValueError(f"Unknown LyCORIS algorithm: {algo}")
             network_module = algo_cls
 
+        # keep a readable type label for saving/loading flows that expect it
+        # (e.g., DoRA keymap adjustments in ToolkitNetworkMixin)
+        self.network_type = algo or network_module.__name__
+
         def _build_algo_map(raw_map: Optional[Dict[str, str]]):
             resolved = {}
             if raw_map is None:
