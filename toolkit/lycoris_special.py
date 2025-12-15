@@ -35,6 +35,15 @@ def create_toolkit_module(base_cls: Type[nn.Module]) -> Type[nn.Module]:
             ToolkitModuleMixin.__init__(self, network=network)
             base_cls.__init__(self, *args, **kwargs)
 
+            # Ensure Toolkit forward wrapper always has the original forward available.
+            # Some LyCORIS modules (e.g., LoHA) don't set `org_forward` themselves.
+            if not hasattr(self, "org_forward"):
+                org_module = getattr(self, "org_module", None)
+                if isinstance(org_module, list) and org_module:
+                    org_module = org_module[0]
+                if org_module is not None and hasattr(org_module, "forward"):
+                    self.org_forward = org_module.forward
+
     ToolkitLycoModule.__name__ = f"Toolkit{base_cls.__name__}"
     return ToolkitLycoModule
 
