@@ -720,6 +720,11 @@ class ToolkitNetworkMixin:
         except IndexError:
             raise ValueError("There are not any lora modules in this network. Check your config and try again")
         
+        def _get_device_and_dtype(module: torch.nn.Module):
+            for tensor in list(module.parameters()) + list(module.buffers()):
+                return tensor.device, tensor.dtype
+            return None, None
+
         if hasattr(first_module, 'lora_down'):
             device = first_module.lora_down.weight.device
             dtype = first_module.lora_down.weight.dtype
@@ -736,7 +741,9 @@ class ToolkitNetworkMixin:
             if hasattr(first_module.lokr_w1_a, '_memory_management_device'):
                 device = first_module.lokr_w1_a._memory_management_device
         else:
-            raise ValueError("Unknown module type")
+            device, dtype = _get_device_and_dtype(first_module)
+            if device is None or dtype is None:
+                raise ValueError("Unknown module type")
         with torch.no_grad():
             tensor_multiplier = None
             if isinstance(multiplier, int) or isinstance(multiplier, float):
