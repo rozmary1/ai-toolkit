@@ -387,15 +387,49 @@ class ZImageModel(BaseModel):
         return ["layers"]
 
     def convert_lora_weights_before_save(self, state_dict):
+        def _swap_prefix(key: str) -> str:
+            if key.startswith("lora_unet__"):
+                return "diffusion_model." + key[len("lora_unet__"):]
+            if key.startswith("lora_unet."):
+                return "diffusion_model." + key[len("lora_unet."):]
+            if key.startswith("lora_transformer__"):
+                return "diffusion_model." + key[len("lora_transformer__"):]
+            if key.startswith("lora_transformer."):
+                return "diffusion_model." + key[len("lora_transformer."):]
+            if key.startswith("transformer."):
+                return key.replace("transformer.", "diffusion_model.", 1)
+            return key
+
         new_sd = {}
         for key, value in state_dict.items():
-            new_key = key.replace("transformer.", "diffusion_model.")
+            new_key = _swap_prefix(key)
+            # LyCORIS module names inside the network use double-underscore as a
+            # safe separator. Restore dotted paths for downstream loaders.
+            new_key = new_key.replace("__", ".")
             new_sd[new_key] = value
         return new_sd
 
     def convert_lora_weights_before_load(self, state_dict):
+        def _swap_prefix(key: str) -> str:
+            if key.startswith("diffusion_model."):
+                return "lora_unet." + key[len("diffusion_model."):]
+            if key.startswith("transformer."):
+                return "lora_unet." + key[len("transformer."):]
+            return key
+
         new_sd = {}
         for key, value in state_dict.items():
-            new_key = key.replace("diffusion_model.", "transformer.")
+            # Accept either dotted or legacy underscore-separated keys and normalize
+            # to the canonical dotted format before mapping back to the safe module
+            # names used inside the network.
+            incoming_key = key
+            if "__" in incoming_key:
+                incoming_key = incoming_key.replace("__", ".")
+
+            new_key = _swap_prefix(incoming_key)
+            # Convert dotted canonical names back to double-underscore-separated
+            # module identifiers so Torch module registration remains valid.
+            if "." in new_key:
+                new_key = new_key.replace(".", "__")
             new_sd[new_key] = value
         return new_sd

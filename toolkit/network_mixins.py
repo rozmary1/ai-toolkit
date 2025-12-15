@@ -287,6 +287,40 @@ class ToolkitModuleMixin:
 
         org_forwarded = self.org_forward(x, *args, **kwargs)
 
+        # Handle LyCORIS variants that do not expose lora_down/lora_up (e.g., LoHA).
+        if not hasattr(self, "lora_down") or not hasattr(self, "lora_up"):
+            if hasattr(self, "get_weight") and hasattr(self, "org_module"):
+                # Mirror LoHA's weight construction but scale by the Toolkit multiplier tensor.
+                if getattr(self, "module_dropout", 0) and self.training:
+                    if torch.rand(1) < self.module_dropout:
+                        bias = None if self.org_module[0].bias is None else self.org_module[0].bias
+                        return self.op(x, self.org_module[0].weight, bias, **self.extra_args)
+
+                weight_base = self.org_module[0].weight
+                if hasattr(weight_base, "dequantize"):
+                    weight_base = weight_base.dequantize()
+                elif not torch.is_floating_point(weight_base):
+                    weight_base = weight_base.float()
+
+                # Keep all LoHA math in the base weight dtype to avoid dtype mismatches with inputs.
+                weight_delta = self.get_weight(weight_base).to(weight_base.dtype) * self.scalar.to(weight_base.dtype)
+                multiplier = self.network_ref().torch_multiplier
+                if multiplier is not None:
+                    # LoHA expects a scalar multiplier; reduce batch-wise tensors accordingly.
+                    if multiplier.numel() > 1:
+                        scale = multiplier.mean()
+                    else:
+                        scale = multiplier.view(-1)[0]
+                    weight_delta = weight_delta * scale.to(weight_base.dtype)
+
+                weight = (weight_base + weight_delta).to(x.dtype)
+                bias = None if self.org_module[0].bias is None else self.org_module[0].bias
+                if bias is not None and bias.dtype != weight.dtype:
+                    bias = bias.to(weight.dtype)
+                return self.op(x, weight.view(self.shape), bias, **self.extra_args)
+
+            return org_forwarded
+
         if isinstance(x, QTensor):
             x = x.dequantize()
         # always cast to float32
@@ -720,6 +754,11 @@ class ToolkitNetworkMixin:
         except IndexError:
             raise ValueError("There are not any lora modules in this network. Check your config and try again")
         
+        def _get_device_and_dtype(module: torch.nn.Module):
+            for tensor in list(module.parameters()) + list(module.buffers()):
+                return tensor.device, tensor.dtype
+            return None, None
+
         if hasattr(first_module, 'lora_down'):
             device = first_module.lora_down.weight.device
             dtype = first_module.lora_down.weight.dtype
@@ -736,7 +775,9 @@ class ToolkitNetworkMixin:
             if hasattr(first_module.lokr_w1_a, '_memory_management_device'):
                 device = first_module.lokr_w1_a._memory_management_device
         else:
-            raise ValueError("Unknown module type")
+            device, dtype = _get_device_and_dtype(first_module)
+            if device is None or dtype is None:
+                raise ValueError("Unknown module type")
         with torch.no_grad():
             tensor_multiplier = None
             if isinstance(multiplier, int) or isinstance(multiplier, float):
