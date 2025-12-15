@@ -369,7 +369,6 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                         algo = network_module
                     for child_name, child_module in module.named_modules():
                         lora_name = prefix + '.' + name + '.' + child_name
-                        lora_name = lora_name.replace('.', '_')
                         if lora_name.startswith('lora_unet_input_blocks_1_0_emb_layers_1'):
                             print(f"{lora_name}")
 
@@ -419,7 +418,6 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                     else:
                         algo = network_module
                     lora_name = prefix + '.' + name
-                    lora_name = lora_name.replace('.', '_')
                     if module.__class__.__name__ == 'Linear' and lora_dim > 0:
                         lora = algo(
                             lora_name, module, self.multiplier,
