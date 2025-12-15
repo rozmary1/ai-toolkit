@@ -243,6 +243,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
             use_text_encoder_2: bool = True,
             use_bias: bool = False,
             is_lorm: bool = False,
+            peft_format: bool = False,
             **kwargs,
     ) -> None:
         # call ToolkitNetworkMixin super
@@ -272,6 +273,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
         # keep a readable type label for saving/loading flows that expect it
         # (e.g., DoRA keymap adjustments in ToolkitNetworkMixin)
         self.network_type = algo or network_module.__name__
+        self.peft_format = peft_format
 
         def _build_algo_map(raw_map: Optional[Dict[str, str]]):
             resolved = {}
