@@ -287,9 +287,29 @@ class ToolkitModuleMixin:
 
         org_forwarded = self.org_forward(x, *args, **kwargs)
 
-        # Some LyCORIS variants (e.g., LoHA) do not expose lora_down/lora_up; fall back to
-        # the original forward to avoid attribute errors while keeping compatibility.
+        # Handle LyCORIS variants that do not expose lora_down/lora_up (e.g., LoHA).
         if not hasattr(self, "lora_down") or not hasattr(self, "lora_up"):
+            if hasattr(self, "get_weight") and hasattr(self, "org_module"):
+                # Mirror LoHA's weight construction but scale by the Toolkit multiplier tensor.
+                if getattr(self, "module_dropout", 0) and self.training:
+                    if torch.rand(1) < self.module_dropout:
+                        bias = None if self.org_module[0].bias is None else self.org_module[0].bias
+                        return self.op(x, self.org_module[0].weight, bias, **self.extra_args)
+
+                weight_delta = self.get_weight(self.org_module[0].weight) * self.scalar
+                multiplier = self.network_ref().torch_multiplier
+                if multiplier is not None:
+                    # LoHA expects a scalar multiplier; reduce batch-wise tensors accordingly.
+                    if multiplier.numel() > 1:
+                        scale = multiplier.mean()
+                    else:
+                        scale = multiplier.view(-1)[0]
+                    weight_delta = weight_delta * scale
+
+                weight = self.org_module[0].weight + weight_delta
+                bias = None if self.org_module[0].bias is None else self.org_module[0].bias
+                return self.op(x, weight.view(self.shape), bias, **self.extra_args)
+
             return org_forwarded
 
         if isinstance(x, QTensor):
