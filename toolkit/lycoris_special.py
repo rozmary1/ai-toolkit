@@ -1,6 +1,7 @@
 import importlib
 import math
 import os
+import weakref
 from typing import Dict, Optional, Union, List, Type
 
 import torch
@@ -244,6 +245,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
             use_bias: bool = False,
             is_lorm: bool = False,
             peft_format: bool = False,
+            base_model=None,
             **kwargs,
     ) -> None:
         # call ToolkitNetworkMixin super
@@ -297,6 +299,9 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
             module_dropout = 0
         self.train_unet = train_unet
         self.train_text_encoder = train_text_encoder
+        self.base_model_ref = None
+        if base_model is not None:
+            self.base_model_ref = weakref.ref(base_model)
 
         self.torch_multiplier = None
         # triggers a tensor update
