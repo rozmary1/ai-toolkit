@@ -296,7 +296,13 @@ class ToolkitModuleMixin:
                         bias = None if self.org_module[0].bias is None else self.org_module[0].bias
                         return self.op(x, self.org_module[0].weight, bias, **self.extra_args)
 
-                weight_delta = self.get_weight(self.org_module[0].weight) * self.scalar
+                weight_base = self.org_module[0].weight
+                if hasattr(weight_base, "dequantize"):
+                    weight_base = weight_base.dequantize()
+                elif not torch.is_floating_point(weight_base):
+                    weight_base = weight_base.float()
+
+                weight_delta = self.get_weight(weight_base) * self.scalar
                 multiplier = self.network_ref().torch_multiplier
                 if multiplier is not None:
                     # LoHA expects a scalar multiplier; reduce batch-wise tensors accordingly.
@@ -306,7 +312,7 @@ class ToolkitModuleMixin:
                         scale = multiplier.view(-1)[0]
                     weight_delta = weight_delta * scale
 
-                weight = self.org_module[0].weight + weight_delta
+                weight = weight_base.to(weight_delta.dtype) + weight_delta
                 bias = None if self.org_module[0].bias is None else self.org_module[0].bias
                 return self.op(x, weight.view(self.shape), bias, **self.extra_args)
 
