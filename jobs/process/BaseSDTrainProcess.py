@@ -1694,10 +1694,12 @@ class BaseSDTrainProcess(BaseTrainProcess):
                 # TODO should we completely switch to LycorisSpecialNetwork?
                 network_kwargs = self.network_config.network_kwargs
                 is_lycoris = False
-                is_lorm = self.network_config.type.lower() == 'lorm'
+                network_type = self.network_config.type.lower()
+                is_lorm = network_type == 'lorm'
                 # default to LoCON if there are any conv layers or if it is named
                 NetworkClass = LoRASpecialNetwork
-                if self.network_config.type.lower() == 'locon' or self.network_config.type.lower() == 'lycoris':
+                lycoris_types = {'locon', 'lycoris', 'loha', 'ia3', 'glora', 'dylora', 'lokr'}
+                if network_type in lycoris_types:
                     NetworkClass = LycorisSpecialNetwork
                     is_lycoris = True
 
