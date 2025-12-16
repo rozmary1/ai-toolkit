@@ -269,7 +269,10 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                     else:
                         algo = network_module
                     for child_name, child_module in module.named_modules():
-                        lora_name = prefix + '.' + name + '.' + child_name
+                        name_parts = [prefix, name, child_name]
+                        clean_parts = [part for part in name_parts if part not in ("", None)]
+                        clean_name = '.'.join(clean_parts)
+                        lora_name = clean_name
                         if self.peft_format:
                             lora_name = lora_name.replace('.', '$$')
                         else:
@@ -284,10 +287,10 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                                 transformer_block_names = base_model.get_transformer_block_names()
 
                             if transformer_block_names is not None:
-                                if not any([name in lora_name for name in transformer_block_names]):
+                                if not any([name in clean_name for name in transformer_block_names]):
                                     skip = True
                             else:
-                                if "transformer_blocks" not in lora_name and "layers" not in lora_name:
+                                if "transformer_blocks" not in clean_name and "layers" not in clean_name:
                                     skip = True
 
                         if skip:
@@ -314,7 +317,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                                     use_cp,
                                     network=self,
                                     parent=module,
-                                use_bias=use_bias,
+                                    use_bias=use_bias,
                                     **kwargs
                                 )
                             elif conv_lora_dim > 0:
@@ -338,7 +341,10 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                         algo = self.NAME_ALGO_MAP[name]
                     else:
                         algo = network_module
-                    lora_name = prefix + '.' + name
+                    name_parts = [prefix, name]
+                    clean_parts = [part for part in name_parts if part not in ("", None)]
+                    clean_name = '.'.join(clean_parts)
+                    lora_name = clean_name
                     if self.peft_format:
                         lora_name = lora_name.replace('.', '$$')
                     else:
