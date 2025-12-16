@@ -1,5 +1,7 @@
 import math
 import os
+import re
+import weakref
 from typing import Optional, Union, List, Type
 
 import torch
@@ -162,6 +164,14 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
             use_text_encoder_2: bool = True,
             use_bias: bool = False,
             is_lorm: bool = False,
+            transformer_only: bool = False,
+            is_transformer: bool = False,
+            network_type: str = "lycoris",
+            peft_format: bool = False,
+            target_replace_modules: Optional[List[str]] = None,
+            target_replace_names: Optional[List[str]] = None,
+            target_lin_modules: Optional[List[str]] = None,
+            base_model=None,
             **kwargs,
     ) -> None:
         # call ToolkitNetworkMixin super
@@ -176,6 +186,29 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
         torch.nn.Module.__init__(self)
 
         # LyCORIS unique stuff
+        self.network_type = network_type
+        self.transformer_only = transformer_only
+        self.is_transformer = is_transformer
+        self.peft_format = peft_format
+        self.base_model_ref = weakref.ref(base_model) if base_model is not None else None
+
+        if self.is_transformer and self.network_type.lower() != "lokr":
+            self.peft_format = True
+
+        unet_prefix = getattr(LycorisSpecialNetwork, "LORA_PREFIX_UNET", "lora_unet")
+        if self.is_transformer:
+            unet_prefix = "lora_transformer"
+            if self.peft_format:
+                unet_prefix = "transformer"
+        text_encoder_prefix = getattr(LycorisSpecialNetwork, "LORA_PREFIX_TEXT_ENCODER", "lora_te")
+
+        target_modules = (
+            target_replace_modules
+            or target_lin_modules
+            or LycorisSpecialNetwork.UNET_TARGET_REPLACE_MODULE
+        )
+        target_names = target_replace_names or LycorisSpecialNetwork.UNET_TARGET_REPLACE_NAME
+
         if dropout is None:
             dropout = 0
         if rank_dropout is None:
@@ -218,7 +251,10 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                 prefix,
                 root_module: torch.nn.Module,
                 target_replace_modules,
-                target_replace_names=[]
+                target_replace_names=[],
+                is_transformer_model: bool = False,
+                transformer_only: bool = False,
+                base_model=None,
         ) -> List[network_module]:
             print('Create LyCORIS Module')
             loras = []
@@ -234,10 +270,33 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                     else:
                         algo = network_module
                     for child_name, child_module in module.named_modules():
-                        lora_name = prefix + '.' + name + '.' + child_name
-                        lora_name = lora_name.replace('.', '_')
+                        name_parts = [prefix, name, child_name]
+                        clean_parts = [part for part in name_parts if part not in ("", None)]
+                        clean_name = '.'.join(clean_parts)
+                        clean_name = re.sub(r"(?<=\d)-(?!$)(?=\d)", ".", clean_name)
+                        lora_name = clean_name
+                        if self.peft_format:
+                            lora_name = lora_name.replace('.', '$$')
+                        else:
+                            lora_name = lora_name.replace('.', '_')
                         if lora_name.startswith('lora_unet_input_blocks_1_0_emb_layers_1'):
                             print(f"{lora_name}")
+
+                        skip = False
+                        if transformer_only and is_transformer_model:
+                            transformer_block_names = None
+                            if base_model is not None:
+                                transformer_block_names = base_model.get_transformer_block_names()
+
+                            if transformer_block_names is not None:
+                                if not any([name in clean_name for name in transformer_block_names]):
+                                    skip = True
+                            else:
+                                if "transformer_blocks" not in clean_name and "layers" not in clean_name:
+                                    skip = True
+
+                        if skip:
+                            continue
 
                         if child_module.__class__.__name__ in LINEAR_MODULES and lora_dim > 0:
                             lora = algo(
@@ -260,7 +319,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                                     use_cp,
                                     network=self,
                                     parent=module,
-                                use_bias=use_bias,
+                                    use_bias=use_bias,
                                     **kwargs
                                 )
                             elif conv_lora_dim > 0:
@@ -284,8 +343,15 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                         algo = self.NAME_ALGO_MAP[name]
                     else:
                         algo = network_module
-                    lora_name = prefix + '.' + name
-                    lora_name = lora_name.replace('.', '_')
+                    name_parts = [prefix, name]
+                    clean_parts = [part for part in name_parts if part not in ("", None)]
+                    clean_name = '.'.join(clean_parts)
+                    clean_name = re.sub(r"(?<=\d)-(?!$)(?=\d)", ".", clean_name)
+                    lora_name = clean_name
+                    if self.peft_format:
+                        lora_name = lora_name.replace('.', '$$')
+                    else:
+                        lora_name = lora_name.replace('.', '_')
                     if module.__class__.__name__ == 'Linear' and lora_dim > 0:
                         lora = algo(
                             lora_name, module, self.multiplier,
@@ -352,14 +418,22 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                 if not use_text_encoder_2 and i == 1:
                     continue
                 self.text_encoder_loras.extend(create_modules(
-                    LycorisSpecialNetwork.LORA_PREFIX_TEXT_ENCODER + (f'{i + 1}' if use_index else ''),
+                    text_encoder_prefix + (f'{i + 1}' if use_index else ''),
                     te,
                     LycorisSpecialNetwork.TEXT_ENCODER_TARGET_REPLACE_MODULE
                 ))
         print(f"create LyCORIS for Text Encoder: {len(self.text_encoder_loras)} modules.")
         if self.train_unet:
-            self.unet_loras = create_modules(LycorisSpecialNetwork.LORA_PREFIX_UNET, unet,
-                                             LycorisSpecialNetwork.UNET_TARGET_REPLACE_MODULE)
+            base_model = self.base_model_ref() if self.base_model_ref is not None else None
+            self.unet_loras = create_modules(
+                unet_prefix,
+                unet,
+                target_modules,
+                target_names,
+                is_transformer_model=self.is_transformer,
+                transformer_only=self.transformer_only,
+                base_model=base_model,
+            )
         else:
             self.unet_loras = []
         print(f"create LyCORIS for U-Net: {len(self.unet_loras)} modules.")

@@ -159,7 +159,7 @@ class LoRMConfig:
         })
 
 
-NetworkType = Literal['lora', 'locon', 'lorm', 'lokr']
+NetworkType = Literal['lora', 'locon', 'lorm', 'lokr', 'loha', 'ia3', 'glora', 'dylora', 'lycoris']
 
 
 class NetworkConfig:
