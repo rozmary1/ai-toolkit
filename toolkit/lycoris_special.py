@@ -166,6 +166,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
             transformer_only: bool = False,
             is_transformer: bool = False,
             network_type: str = "lycoris",
+            peft_format: bool = False,
             target_replace_modules: Optional[List[str]] = None,
             target_replace_names: Optional[List[str]] = None,
             target_lin_modules: Optional[List[str]] = None,
@@ -187,11 +188,17 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
         self.network_type = network_type
         self.transformer_only = transformer_only
         self.is_transformer = is_transformer
+        self.peft_format = peft_format
         self.base_model_ref = weakref.ref(base_model) if base_model is not None else None
+
+        if self.is_transformer and self.network_type.lower() != "lokr":
+            self.peft_format = True
 
         unet_prefix = getattr(LycorisSpecialNetwork, "LORA_PREFIX_UNET", "lora_unet")
         if self.is_transformer:
             unet_prefix = "lora_transformer"
+            if self.peft_format:
+                unet_prefix = "transformer"
         text_encoder_prefix = getattr(LycorisSpecialNetwork, "LORA_PREFIX_TEXT_ENCODER", "lora_te")
 
         target_modules = (
@@ -263,7 +270,10 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                         algo = network_module
                     for child_name, child_module in module.named_modules():
                         lora_name = prefix + '.' + name + '.' + child_name
-                        lora_name = lora_name.replace('.', '_')
+                        if self.peft_format:
+                            lora_name = lora_name.replace('.', '$$')
+                        else:
+                            lora_name = lora_name.replace('.', '_')
                         if lora_name.startswith('lora_unet_input_blocks_1_0_emb_layers_1'):
                             print(f"{lora_name}")
 
@@ -329,7 +339,10 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                     else:
                         algo = network_module
                     lora_name = prefix + '.' + name
-                    lora_name = lora_name.replace('.', '_')
+                    if self.peft_format:
+                        lora_name = lora_name.replace('.', '$$')
+                    else:
+                        lora_name = lora_name.replace('.', '_')
                     if module.__class__.__name__ == 'Linear' and lora_dim > 0:
                         lora = algo(
                             lora_name, module, self.multiplier,
