@@ -165,6 +165,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
             is_lorm: bool = False,
             transformer_only: bool = False,
             is_transformer: bool = False,
+            network_type: str = "lycoris",
             target_replace_modules: Optional[List[str]] = None,
             target_replace_names: Optional[List[str]] = None,
             target_lin_modules: Optional[List[str]] = None,
@@ -183,6 +184,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
         torch.nn.Module.__init__(self)
 
         # LyCORIS unique stuff
+        self.network_type = network_type
         self.transformer_only = transformer_only
         self.is_transformer = is_transformer
         self.base_model_ref = weakref.ref(base_model) if base_model is not None else None
