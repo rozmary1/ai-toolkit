@@ -1,5 +1,6 @@
 import math
 import os
+import re
 import weakref
 from typing import Optional, Union, List, Type
 
@@ -272,6 +273,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                         name_parts = [prefix, name, child_name]
                         clean_parts = [part for part in name_parts if part not in ("", None)]
                         clean_name = '.'.join(clean_parts)
+                        clean_name = re.sub(r"(?<=\d)-(?!$)(?=\d)", ".", clean_name)
                         lora_name = clean_name
                         if self.peft_format:
                             lora_name = lora_name.replace('.', '$$')
@@ -344,6 +346,7 @@ class LycorisSpecialNetwork(ToolkitNetworkMixin, LycorisNetwork):
                     name_parts = [prefix, name]
                     clean_parts = [part for part in name_parts if part not in ("", None)]
                     clean_name = '.'.join(clean_parts)
+                    clean_name = re.sub(r"(?<=\d)-(?!$)(?=\d)", ".", clean_name)
                     lora_name = clean_name
                     if self.peft_format:
                         lora_name = lora_name.replace('.', '$$')
